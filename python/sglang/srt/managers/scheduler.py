@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import psutil
 import setproctitle
 import torch
+import torch.cuda.nvtx as nvtx
 import zmq
 from torch.distributed import barrier
 
@@ -511,6 +512,32 @@ class Scheduler(
 
         if get_bool_env_var("SGLANG_GC_LOG"):
             configure_gc_logger()
+
+        # Simple nsys profiling range for debugging
+        self.nsys_profile_start_iter = None
+        self.nsys_profile_end_iter = None
+        self.nsys_profiler_active = False
+        
+        # Check environment variable for nsys profiling range (format: "start-end" or "start" or "-end")
+        nsys_profile_range = os.environ.get("SGLANG_NSYS_PROFILE_RANGE")
+        logger.info(f"nsys_profile_range: {nsys_profile_range}")
+        if nsys_profile_range:
+            try:
+                if "-" in nsys_profile_range:
+                    parts = nsys_profile_range.split("-")
+                    if len(parts) == 2:
+                        start_str, end_str = parts
+                        if start_str.strip():
+                            self.nsys_profile_start_iter = int(start_str.strip())
+                        if end_str.strip():
+                            self.nsys_profile_end_iter = int(end_str.strip())
+                else:
+                    # Single number means start from that iteration
+                    self.nsys_profile_start_iter = int(nsys_profile_range.strip())
+                    
+                logger.info(f"Nsys profiling range enabled: start_iter={self.nsys_profile_start_iter}, end_iter={self.nsys_profile_end_iter}")
+            except ValueError as e:
+                logger.warning(f"Invalid SGLANG_NSYS_PROFILE_RANGE format '{nsys_profile_range}': {e}")
 
     def maybe_sleep_on_idle(self):
         if self.idle_sleeper is not None:
@@ -1667,12 +1694,32 @@ class Scheduler(
         """Run a batch."""
         self.forward_ct += 1
 
+        # NVTX range for the entire batch
+        nvtx.range_push(f"run_batch_iter_{self.forward_ct}")
+
+        # Simple nsys profiling range check
+        should_profile = False
+        if self.nsys_profile_start_iter is not None or self.nsys_profile_end_iter is not None:
+            start_ok = self.nsys_profile_start_iter is None or self.forward_ct >= self.nsys_profile_start_iter
+            end_ok = self.nsys_profile_end_iter is None or self.forward_ct <= self.nsys_profile_end_iter
+            should_profile = start_ok and end_ok
+            
+            if should_profile and not self.nsys_profiler_active:
+                self._start_nsys_profiling()
+            elif not should_profile and self.nsys_profiler_active:
+                self._stop_nsys_profiling()
+
+        # NVTX range for profiling setup
+        nvtx.range_push("profiling_setup")
         # Whether to run the profiler
         self._profile_batch_predicate(batch)
         if self.forward_sleep_time is not None:
             logger.info(f"Scheduler.run_batch sleep {self.forward_sleep_time}s")
             time.sleep(self.forward_sleep_time)
+        nvtx.range_pop()  # profiling_setup
 
+        # NVTX range for forward pass
+        nvtx.range_push("forward_pass")
         # Run forward
         if self.is_generation:
             if self.spec_algorithm.is_none():
@@ -1740,6 +1787,10 @@ class Scheduler(
             ret = EmbeddingBatchResult(
                 embeddings=embeddings, bid=model_worker_batch.bid
             )
+        
+        nvtx.range_pop()  # forward_pass
+        nvtx.range_pop()  # run_batch_iter_X
+        
         return ret
 
     def process_batch_result(
@@ -2566,6 +2617,30 @@ class Scheduler(
             if events:
                 batch = KVEventBatch(ts=time.time(), events=events)
                 self.kv_event_publisher.publish(batch)
+
+    def _start_nsys_profiling(self):
+        """Start nsys profiling."""
+        if self.nsys_profiler_active:
+            return
+            
+        try:
+            torch.cuda.cudart().cudaProfilerStart()
+            self.nsys_profiler_active = True
+            logger.info(f"Started nsys profiling at iteration {self.forward_ct}")
+        except Exception as e:
+            logger.warning(f"Failed to start nsys profiling: {e}")
+
+    def _stop_nsys_profiling(self):
+        """Stop nsys profiling."""
+        if not self.nsys_profiler_active:
+            return
+            
+        try:
+            torch.cuda.cudart().cudaProfilerStop()
+            self.nsys_profiler_active = False
+            logger.info(f"Stopped nsys profiling at iteration {self.forward_ct}")
+        except Exception as e:
+            logger.warning(f"Failed to stop nsys profiling: {e}")
 
 
 def is_health_check_generate_req(recv_req):
