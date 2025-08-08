@@ -222,7 +222,9 @@ class DeepseekV2MLP(nn.Module):
         gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(
-            x, skip_all_reduce=should_allreduce_fusion or use_reduce_scatter, disable_symmetric_memory=disable_symmetric_memory
+            x,
+            skip_all_reduce=should_allreduce_fusion or use_reduce_scatter,
+            disable_symmetric_memory=disable_symmetric_memory,
         )
         return x
 
@@ -461,11 +463,17 @@ class DeepseekV2MoE(nn.Module):
                 and hidden_states.shape[0] <= DUAL_STREAM_TOKEN_THRESHOLD
             ):
                 return self.forward_normal_dual_stream(
-                    hidden_states, should_allreduce_fusion, use_reduce_scatter, disable_symmetric_memory
+                    hidden_states,
+                    should_allreduce_fusion,
+                    use_reduce_scatter,
+                    disable_symmetric_memory,
                 )
             else:
                 return self.forward_normal(
-                    hidden_states, should_allreduce_fusion, use_reduce_scatter, disable_symmetric_memory
+                    hidden_states,
+                    should_allreduce_fusion,
+                    use_reduce_scatter,
+                    disable_symmetric_memory,
                 )
         else:
             return self.forward_deepep(hidden_states, forward_batch)
@@ -1970,7 +1978,11 @@ class DeepseekV2DecoderLayer(nn.Module):
         )
 
         hidden_states = self.mlp(
-            hidden_states, forward_batch, should_allreduce_fusion, use_reduce_scatter, disable_symmetric_memory
+            hidden_states,
+            forward_batch,
+            should_allreduce_fusion,
+            use_reduce_scatter,
+            disable_symmetric_memory,
         )
 
         if should_allreduce_fusion:
