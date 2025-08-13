@@ -552,13 +552,7 @@ class DeepseekV2MoE(nn.Module):
                 kwargs["topk_output"] = self.topk(hidden_states, router_logits)
         else:
             shared_output = None
-            topk_weights = torch.empty(
-                (0, self.top_k), dtype=torch.float32, device=hidden_states.device
-            )
-            topk_ids = torch.full(
-                (0, self.top_k), -1, dtype=torch.int, device=hidden_states.device
-            )
-            kwargs["topk_output"] = StandardTopKOutput(topk_weights, topk_ids, None)
+            kwargs["topk_output"] = self.topk.empty_topk_output(hidden_states.device)
 
         if should_use_flashinfer_cutlass_moe_fp4_allgather():
             kwargs["global_num_tokens_cpu"] = (
@@ -661,11 +655,8 @@ class DeepseekV2MoE(nn.Module):
                 ),
             )
         else:
-            topk_idx = torch.full(
-                (0, self.top_k), -1, dtype=torch.int, device=hidden_states.device
-            )
-            topk_weights = torch.empty(
-                (0, self.top_k), dtype=torch.float32, device=hidden_states.device
+            topk_weights, topk_idx, _ = self.topk.empty_topk_output(
+                hidden_states.device
             )
 
         final_hidden_states = self.experts(

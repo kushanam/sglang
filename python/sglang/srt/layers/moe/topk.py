@@ -277,6 +277,12 @@ class TopK(CustomOp):
                 expert_location_dispatch_info=expert_location_dispatch_info,
             )
 
+    def empty_topk_output(self, device: torch.device) -> TopKOutput:
+        topk = self.top_k - self.num_fused_shared_experts
+        topk_weights = torch.empty((0, topk), dtype=torch.float32, device=device)
+        topk_idx = torch.full((0, topk), -1, dtype=torch.int32, device=device)
+        return StandardTopKOutput(topk_weights, topk_idx, None)
+
 
 # ------------------------------- TopK implementation -------------------------------------
 

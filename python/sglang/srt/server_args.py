@@ -671,6 +671,7 @@ class ServerArgs:
             self.disable_cuda_graph = True
             logger.warning("Cuda graph is disabled for prefill server")
 
+        # Propagate env vars
         os.environ["SGLANG_ENABLE_TORCH_COMPILE"] = (
             "1" if self.enable_torch_compile else "0"
         )
