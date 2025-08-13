@@ -1155,7 +1155,7 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         ep_size: Optional[int] = None,
         tp_rank: Optional[int] = None,
         tp_size: Optional[int] = None,
-        forward_batch: Optional[ForwardBatch] = None,
+        global_num_tokens_cpu: Optional[list[int]] = None,
     ) -> torch.Tensor:
         assert activation == "silu", "Only SiLU activation is supported."
 
@@ -1188,18 +1188,8 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                     x_sf = torch.zeros(
                         0, x_col // 16, dtype=torch.uint8, device=x.device
                     )
-                (
-                    topk_weights,
-                    topk_ids,
-                    x,
-                    x_sf,
-                ) = get_tp_group().all_gatherv(
-                    [topk_weights, topk_ids, x, x_sf],
-                    sizes=(
-                        None
-                        if forward_batch.dp_padding_mode.is_max_len()
-                        else forward_batch.global_num_tokens_cpu
-                    ),
+                topk_weights, topk_ids, x, x_sf = get_tp_group().all_gatherv(
+                    [topk_weights, topk_ids, x, x_sf], sizes=global_num_tokens_cpu
                 )
                 x_sf = nvfp4_block_scale_interleave(x_sf)
 
@@ -1227,20 +1217,9 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             )[0]
             if routed_scaling_factor is not None:
                 output *= routed_scaling_factor
-
             if should_use_flashinfer_cutlass_moe_fp4_allgather():
-                output, global_hidden_states = (
-                    forward_batch.gathered_buffer[: forward_batch.input_ids.shape[0]],
-                    output,
-                )
-                get_tp_group().reduce_scatterv(
-                    global_hidden_states,
-                    output=output,
-                    sizes=(
-                        None
-                        if forward_batch.dp_padding_mode.is_max_len()
-                        else forward_batch.global_num_tokens_cpu
-                    ),
+                output = get_tp_group().reduce_scatterv(
+                    output, sizes=global_num_tokens_cpu
                 )
             return output
 

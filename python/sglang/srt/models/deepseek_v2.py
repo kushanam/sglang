@@ -503,7 +503,11 @@ class DeepseekV2MoE(nn.Module):
             else:
                 kwargs["topk_output"] = self.topk(hidden_states, router_logits)
             if should_use_flashinfer_cutlass_moe_fp4_allgather():
-                kwargs["forward_batch"] = forward_batch
+                kwargs["global_num_tokens_cpu"] = (
+                    None
+                    if forward_batch.dp_padding_mode.is_max_len()
+                    else forward_batch.global_num_tokens_cpu
+                )
 
             final_hidden_states = self.experts(**kwargs)
             if not _is_cuda:
@@ -557,7 +561,12 @@ class DeepseekV2MoE(nn.Module):
             kwargs["topk_output"] = StandardTopKOutput(topk_weights, topk_ids, None)
 
         if should_use_flashinfer_cutlass_moe_fp4_allgather():
-            kwargs["forward_batch"] = forward_batch
+            kwargs["global_num_tokens_cpu"] = (
+                None
+                if forward_batch.dp_padding_mode.is_max_len()
+                else forward_batch.global_num_tokens_cpu
+            )
+
         final_hidden_states = self.experts(**kwargs)
         if not _is_cuda and not _use_aiter:
             # fused in biased_grouped_topk so we can skip here

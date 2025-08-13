@@ -28,9 +28,9 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
+from sglang.srt.layers.quantization.modelopt_quant import ModelOptNvFp4FusedMoEMethod
 from sglang.srt.layers.quantization.unquant import UnquantizedFusedMoEMethod
 from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import narrow_padded_param_and_loaded_weight
 from sglang.srt.utils import (
     cpu_has_amx_support,
@@ -626,9 +626,7 @@ class FusedMoE(torch.nn.Module):
 
         if "ModelOpt" in self.quant_method.__class__.__name__:
             # Determine per-tensor weight scale patterns based on variant
-            is_fp4_variant = (
-                "ModelOptNvFp4FusedMoEMethod" in self.quant_method.__class__.__name__
-            )
+            is_fp4_variant = isinstance(self.quant_method, ModelOptNvFp4FusedMoEMethod)
 
             # FP4 uses "weight_scale_2" for per-tensor, FP8 uses "weight_scale" for per-tensor
             per_tensor_conditions = (
@@ -799,7 +797,7 @@ class FusedMoE(torch.nn.Module):
         self,
         hidden_states: torch.Tensor,
         topk_output: StandardTopKOutput,
-        forward_batch: Optional[ForwardBatch] = None,
+        global_num_tokens_cpu: Optional[list[int]] = None,
     ):
         origin_hidden_states_dim = hidden_states.shape[-1]
         assert self.quant_method is not None
@@ -837,10 +835,9 @@ class FusedMoE(torch.nn.Module):
                         tp_size=self.moe_tp_size,
                         ep_rank=self.moe_ep_rank,
                         ep_size=self.moe_ep_size,
-                        forward_batch=forward_batch,
+                        global_num_tokens_cpu=global_num_tokens_cpu,
                     )
-                    if self.quant_method.__class__.__name__
-                    == "ModelOptNvFp4FusedMoEMethod"
+                    if isinstance(self.quant_method, ModelOptNvFp4FusedMoEMethod)
                     else {}
                 ),
                 **kwargs,
